@@ -81,7 +81,7 @@ schema you are working with.
 == Using
 
 Start Solr with the -Dsolr.clustering.enabled=true option.  Once the server
-has started, cluster your documents using an url like
+has started, cluster your documents using an URL like
 
   http://localhost:8983/solr/lsa4solr?nclusters=2&q=Summary:.*&rows=100&k=10
 
@@ -93,3 +93,8 @@ where
   rows - the standard Solr rows parameter
   
 The cluster information will be at the bottom of the response.
+
+== Testing
+
+On the Downloads page, there is a Usenet dataset which can be found "here":http://people.csail.mit.edu/jrennie/20Newsgroups/  Import some documents from two or more
+of the newsgroups into your Solr instance and access the lsa4solr URL.
