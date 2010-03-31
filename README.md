@@ -1,7 +1,7 @@
 lsa4solr
 ========
 
-A clustering engine for Solr based on Latent Semantic Indexing.  The engine
+A clustering engine for Solr based on Latent Semantic Analysis.  The engine
 constructs a term frequency matrix which it stores in memory.  When requests for
 clustering documents are made, the term document matrix is constructed for the
 documents in the query result and decomposed using Singular Value Decomposition.
