@@ -103,3 +103,29 @@ Testing
 
 On the Downloads page, there is a Usenet dataset which can be found [here](http://people.csail.mit.edu/jrennie/20Newsgroups/)
 Import some documents from two or more of the newsgroups into your Solr instance and access the lsa4solr URL.
+
+You can also use the cluster algorithm directly from the REPL
+
+    lein swank
+
+    user> (in-ns 'lsa4solr.cluster)
+    #<Namespace lsa4solr.cluster>
+    lsa4solr.cluster> (def reader (org.apache.lucene.index.IndexReader/open (org.apache.lucene.store.FSDirectory/open (new java.io.File "/path/to/solr/data/index"))))
+    #'lsa4solr.cluster/reader
+    lsa4solr.cluster> (def initial-terms (init-term-freq-doc reader "Summary"))
+    #'lsa4solr.cluster/initial-terms
+    lsa4solr.cluster> (def searcher (new org.apache.lucene.search.IndexSearcher reader))
+    #'lsa4solr.cluster/searcher
+    lsa4solr.cluster> (def queryparser 
+         (new org.apache.lucene.queryParser.QueryParser 
+    	  (org.apache.lucene.util.Version/LUCENE_30)
+    	  "Summary"
+    	  (new org.apache.lucene.analysis.SimpleAnalyzer)))
+    #'lsa4solr.cluster/queryparser
+    lsa4solr.cluster> (def result (. searcher search (. queryparser parse "Summary:br*") (. reader maxDoc)))
+    #'lsa4solr.cluster/result
+    lsa4solr.cluster> (def docids (map #(. %1 doc) (. result scoreDocs)))
+    #'lsa4solr.cluster/docids
+    lsa4solr.cluster> (def docslice (new org.apache.solr.search.DocSlice 0 (count docids) (int-array docids) (float-array (repeat (count docids) 1)) (count docids) 1))
+    #'lsa4solr.cluster/docslice
+    lsa4solr.cluster> (def clst (cluster reader "Summary" initial-terms docslice 50 2))
