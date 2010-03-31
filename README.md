@@ -40,11 +40,7 @@ classloader include:
     arpack-combo-0.1.jar
     clojure-1.2.0.jar
     clojure-contrib-1.2.0-master-20100122.191106-1.jar
-    incanter-io-1.0.0.jar
     incanter-full-1.0.0.jar
-    incanter-core-1.0.0.jar
-    incanter-chrono-1.0.0.jar
-    incanter-charts-1.0.0.jar
     apache-solr-clustering-3.1-dev.jar
     parallelcolt-0.7.2.jar
     lsa4solr.jar
