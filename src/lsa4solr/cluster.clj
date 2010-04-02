@@ -16,6 +16,7 @@
 
 (defn init-term-freq-doc [reader field]
   (let [terms (. reader terms)
+	numdocs (.maxDoc reader)
 	counter (let [count (ref 0)] #(dosync (alter count inc)))]
     (apply merge
 	   (take-while 
@@ -23,10 +24,12 @@
 	    (repeatedly 
 	     (fn [] 
 	       (if (and (. terms next) (= field (.field (. terms term))))
-		 (let [text (. (. terms term) text)]
+		 (let [text (. (. terms term) text)
+		       df (. terms docFreq)]
 		   {(keyword text) 
 		    {
-		     :df (. terms docFreq)
+		     :df df
+		     :idf (log2 (/ numdocs df))
 		     :idx (counter)
 		     }
 		    })
@@ -38,18 +41,25 @@
   (let [super-result (.superinit this config solr-core)
 	reader (.getReader (.get (.getSearcher solr-core true true nil)))
 	narrative-field (.get config "narrative-field")
+	id-field (.get config "id-field")
 	name (.get config "name")]
     (dosync 
-     (alter 
-      (.state this) assoc :reader reader :name name :narrative-field narrative-field :terms (init-term-freq-doc reader narrative-field) )
+     (alter (.state this) assoc 
+	    :reader reader 
+	    :name name 
+	    :narrative-field narrative-field 
+	    :id-field id-field
+	    :terms (init-term-freq-doc reader narrative-field))
      name)))
 
 
-(defn get-mapper [terms vec-ref]
+(defn get-mapper [terms vec-ref ndocs]
      (proxy [org.apache.lucene.index.TermVectorMapper]
 	 []
        (map [term frequency offsets positions]
-	    (dosync (alter vec-ref assoc (- (:idx ((keyword term) terms)) 1) frequency)))
+	    (let [term-entry ((keyword term) terms)]
+	      (dosync (alter vec-ref assoc 
+			     (- (:idx term-entry) 1)  (* frequency (:idf term-entry))))))
        (setExpectations [field numTerms storeOffsets storePositions]
 			nil)))
 
@@ -58,16 +68,18 @@
 
 (defn get-frequency-matrix [reader field terms hits]
   (pmap #(let [m (init-frequency-vector (length terms))
-	       mapper (get-mapper terms m)]
+	       mapper (get-mapper terms m (count hits))]
 	   (do
 	     (. reader getTermFreqVector (int %1) field mapper)
 	     @m))
 	hits))
 
-(defn get-docid [reader id] (.stringValue (.getField (.document reader id) "id")))
+(defn get-docid [reader id-field id] 
+  (.stringValue (.getField (.document reader id) id-field)))
 
 (defn cluster [reader
 	       field
+	       id-field
 	       terms
 	       doc-list
 	       k
@@ -88,22 +100,30 @@
 				    [(first pc) (cosine-similarity docvec (second pc))]) 
 				  (indexed (trans pcs))))) 
 		  VS)
-	labels (clojure.contrib.seq-utils/indexed (map #(first (last %)) sims))]
-    (reduce #(merge %1 %2) 
-	    {}
-	    (map 
-	     (fn [x] 
-	       {(keyword (str x)) (map #(get-docid reader (nth doc-seq %)) (map first (filter #(= (second %) x) labels)))})
-	     (range 0 num-clusters)))))
+	labels (clojure.contrib.seq-utils/indexed (map #(first (last %)) sims))
+	clusters (reduce #(merge %1 %2) 
+			 {} 
+			 (map (fn [x] {(keyword (str x)) 
+				       (map #(get-docid reader
+							id-field
+							(nth doc-seq %)) 
+					    (map first
+						 (filter #(= (second %) x) 
+							 labels)))})
+			      (range 0 num-clusters)))]
+    {:clusters clusters
+     :svd svd}))
+
 
 (defn -cluster [this
 		query
 		doc-list
 		solr-request]
-  (cluster 
-   (:reader @(.state this)) 
-   (:narrative-field @(.state this)) 
-   (:terms @(.state this)) 
-   doc-list 
-   (Integer. (.get (.getParams solr-request) "k"))
-   (Integer. (.get (.getParams solr-request) "nclusters"))))
+  (:clusters (cluster 
+	      (:reader @(.state this)) 
+	      (:narrative-field @(.state this)) 
+	      (:id-field @(.state this))
+	      (:terms @(.state this)) 
+	      doc-list 
+	      (Integer. (.get (.getParams solr-request) "k"))
+	      (Integer. (.get (.getParams solr-request) "nclusters")))))

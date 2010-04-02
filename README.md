@@ -59,6 +59,7 @@ Add the following to your solrconfig.xml
         <str name="classname">lsa4solr.cluster.LSAClusteringEngine</str>
         <str name="name">lsa4solr</str>
         <str name="narrative-field">Summary</str>
+        <str name="id-field">Summary</str>
       </lst>
     </searchComponent>
      <requestHandler name="/lsa4solr"
@@ -75,7 +76,29 @@ Add the following to your solrconfig.xml
     </requestHandler>
   
 Configure the narrative-field parameter to be the text field of the
-schema you are working with.
+schema you are working with and the id-field parameter to be the unique
+field that will be returned.
+
+You will need to tweak the Solr filters on the narrative field in order
+to get the best results.  I have been using the following set of filters
+to get decent results:
+
+    <fieldType name="text" class="solr.TextField" positionIncrementGap="100">
+      <analyzer type="index">
+        <tokenizer class="solr.WhitespaceTokenizerFactory"/>
+        <filter class="solr.StopFilterFactory" ignoreCase="true" words="stopwords.txt" />
+        <filter class="solr.WordDelimiterFilterFactory" 
+		generateWordParts="0"
+		generateNumberParts="0"
+		catenateWords="1"
+		catenateNumbers="1"
+		catenateAll="0"/>
+         <filter class="solr.LowerCaseFilterFactory"/>
+         <filter class="solr.SnowballPorterFilterFactory" language="English" protected="protwords.txt"/>
+         <filter class="solr.RemoveDuplicatesTokenFilterFactory"/>
+      </analyzer>
+   </fieldType>
+
 
 Using
 -----
@@ -124,4 +147,4 @@ You can also use the cluster algorithm directly from the REPL
     #'lsa4solr.cluster/docids
     lsa4solr.cluster> (def docslice (new org.apache.solr.search.DocSlice 0 (count docids) (int-array docids) (float-array (repeat (count docids) 1)) (count docids) 1))
     #'lsa4solr.cluster/docslice
-    lsa4solr.cluster> (def clst (cluster reader "Summary" initial-terms docslice 50 2))
+    lsa4solr.cluster> (def clst (cluster reader "Summary" "id" initial-terms docslice 50 2))
