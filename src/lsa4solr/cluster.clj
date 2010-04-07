@@ -1,15 +1,17 @@
 (ns lsa4solr.cluster
   (:use [clojure.contrib.seq-utils :only [indexed]]
+	[lsa4solr core clustering-protocol]
 	[incanter.core]
 	[incanter.stats])
   (:import (cern.colt.matrix.tdouble.algo.decomposition DoubleSingularValueDecomposition)
-	   (incanter Matrix))
-  (:gen-class
-   :name lsa4solr.cluster/LSAClusteringEngine
-   :extends org.apache.solr.handler.clustering.SearchClusteringEngine
-   :exposes-methods {init superinit}
-   :init initialize-state
-   :state state))
+	   (incanter Matrix)))
+
+(gen-class
+ :name lsa4solr.cluster/LSAClusteringEngine
+ :extends org.apache.solr.handler.clustering.SearchClusteringEngine
+ :exposes-methods {init superinit}
+ :init initialize-state
+ :state state)
 
 (defn -initialize-state []
     [[] (ref {})])
@@ -52,32 +54,11 @@
 	    :terms (init-term-freq-doc reader narrative-field))
      name)))
 
-
-(defn get-mapper [terms vec-ref ndocs]
-     (proxy [org.apache.lucene.index.TermVectorMapper]
-	 []
-       (map [term frequency offsets positions]
-	    (let [term-entry ((keyword term) terms)]
-	      (dosync (alter vec-ref assoc 
-			     (- (:idx term-entry) 1)  (* frequency (:idf term-entry))))))
-       (setExpectations [field numTerms storeOffsets storePositions]
-			nil)))
-
-(defn init-frequency-vector [n]
-  (ref (vec (repeat n 0))))
-
-(defn get-frequency-matrix [reader field terms hits]
-  (pmap #(let [m (init-frequency-vector (length terms))
-	       mapper (get-mapper terms m (count hits))]
-	   (do
-	     (. reader getTermFreqVector (int %1) field mapper)
-	     @m))
-	hits))
-
 (defn get-docid [reader id-field id] 
   (.stringValue (.getField (.document reader id) id-field)))
 
-(defn cluster [reader
+(defn cluster [clustering-protocol
+	       reader
 	       field
 	       id-field
 	       terms
@@ -85,11 +66,11 @@
 	       k
 	       num-clusters]
   (let [doc-seq (iterator-seq (.iterator doc-list))
-	m (trans (matrix (get-frequency-matrix reader field terms doc-seq)))
-	svd (DoubleSingularValueDecomposition. m)
-	U (Matrix. (.getU svd))
-	S (Matrix. (.getS svd))
-	V (Matrix. (.getV svd))
+	m (get-frequency-matrix clustering-protocol reader field terms doc-seq)
+	svd (svd clustering-protocol k m)
+	U (:U svd)
+	S (:S svd)
+	V (:V svd)
 	VS (mmult (sel V :cols (range 0 k)) 
 		  (sel (sel S :cols (range 0 k)) :rows (range 0 k)))
 	pca (principal-components VS)
@@ -119,11 +100,15 @@
 		query
 		doc-list
 		solr-request]
-  (:clusters (cluster 
-	      (:reader @(.state this)) 
-	      (:narrative-field @(.state this)) 
-	      (:id-field @(.state this))
-	      (:terms @(.state this)) 
-	      doc-list 
-	      (Integer. (.get (.getParams solr-request) "k"))
-	      (Integer. (.get (.getParams solr-request) "nclusters")))))
+  (let [algorithm (.get (.getParams solr-request) "mode")
+	engine (cond (= "distributed" algorithm) (DistributedLSAClusteringEngine)
+			   :else (LocalLSAClusteringEngine))
+	result (cluster engine
+			(:reader @(.state this)) 
+			(:narrative-field @(.state this)) 
+			(:id-field @(.state this))
+			(:terms @(.state this)) 
+			doc-list 
+			(Integer. (.get (.getParams solr-request) "k"))
+			(Integer. (.get (.getParams solr-request) "nclusters")))]
+  (:clusters result)))

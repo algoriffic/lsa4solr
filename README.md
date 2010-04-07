@@ -11,9 +11,12 @@ the cosine similarity distance of each individual document to the first n princi
 components.
 
 This first version requires that the number of clusters and the reduced rank be
-supplied by the user.  Also, matrix algebra is performed in memory therefore only
-small document sets will work.  Development goals include determining the optimal
-number of clusters, interfacing with Apache Mahout matrix algebra packages, optimizing
+supplied by the user.  There are two modes to the algorithm - local and distributed.
+In local mode, matrix algebra is performed in memory therefore only
+small document sets will work.  In distributed mode, decomposition is done using Apache
+Mahout.  This mode is more appropriate for large document sets.
+
+Development goals include determining the optimal number of clusters, optimizing
 the reduced rank, etc.
 
 Building
@@ -45,6 +48,10 @@ classloader include:
     parallelcolt-0.7.2.jar
     lsa4solr.jar
     netlib-java-0.9.1.jar
+    hadoop-core-0.20.2.jar
+    mahout-collections-0.4-SNAPSHOT.jar
+    mahout-core-0.4-SNAPSHOT.jar
+    mahout-math-0.4-SNAPSHOT.jar
   
 Configuring Solr
 ----------------
@@ -117,6 +124,18 @@ where
   
 The cluster information will be at the bottom of the response.
 
+Using with Hadoop
+-----------------
+
+In order to use lsa4solr with Hadoop, make sure that the mahout-math-0.4.jar is
+in the Hadoop lib directory.  This is a dependency of the mahout-core-0.4.jar which
+contains the distributed job.  Put the core-site.xml and mapred-site.xml files from
+the resources directory into Solr's webapp/WEB-INF/classes directory and configure
+them to point to your Hadoop setup.  Finally, access lsa4solr-distributed by appending
+"mode=distributed" to the URL:
+
+     http://localhost:8983/solr/lsa4solr?nclusters=2&q=Summary:.*&rows=100&k=10&mode=distributed
+
 Testing
 -------
 
@@ -147,4 +166,4 @@ You can also use the cluster algorithm directly from the REPL
     #'lsa4solr.cluster/docids
     lsa4solr.cluster> (def docslice (new org.apache.solr.search.DocSlice 0 (count docids) (int-array docids) (float-array (repeat (count docids) 1)) (count docids) 1))
     #'lsa4solr.cluster/docslice
-    lsa4solr.cluster> (def clst (cluster reader "Summary" "id" initial-terms docslice 50 2))
+    lsa4solr.cluster> (def clst (cluster (LocalLSAClusteringEngine) reader "Summary" "id" initial-terms docslice 50 2))
