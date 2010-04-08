@@ -93,11 +93,13 @@
 	     eigenvectors (new org.apache.mahout.math.DenseMatrix (+ k 2) (.numCols m))
 	     decomposer (doto (new org.apache.mahout.math.hadoop.decomposer.DistributedLanczosSolver)
 			  (.solve dm (+ k 2) eigenvectors eigenvalues false))]
-	 {:U nil
+	 {:eigenvectors eigenvectors
+	  :eigenvalues eigenvalues
+	  :U nil
 	  :S (diag (map #(sqrt %) (reverse (take-last k eigenvalues))))
 	  :V (trans 
 	      (matrix (to-array (map (fn [vec] (map #(.get %1) 
 						    (iterator-seq (.iterateAll (.vector vec)))))
-				     (take k (reverse eigenvectors))))))}))
+				     (take k eigenvectors)))))}))
   )
 
