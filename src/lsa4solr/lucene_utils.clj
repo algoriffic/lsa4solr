@@ -1,5 +1,8 @@
 (ns lsa4solr.lucene-utils)
 
+(defn get-docid [reader id-field id] 
+  (.stringValue (.getField (.document reader id) id-field)))
+
 (defn extract-frequency-vectors
   [reader init-frequency-vector get-mapper field terms hits]
   (pmap #(let [m (init-frequency-vector (count terms))

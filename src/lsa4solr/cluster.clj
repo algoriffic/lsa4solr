@@ -54,46 +54,20 @@
 	    :terms (init-term-freq-doc reader narrative-field))
      name)))
 
-(defn get-docid [reader id-field id] 
-  (.stringValue (.getField (.document reader id) id-field)))
-
-(defn cluster [clustering-protocol
-	       reader
-	       field
-	       id-field
-	       terms
-	       doc-list
-	       k
-	       num-clusters]
+(defn cluster-dispatch [clustering-protocol
+			reader
+			field
+			id-field
+			terms
+			doc-list
+			k
+			num-clusters]
   (let [doc-seq (iterator-seq (.iterator doc-list))
 	m (get-frequency-matrix clustering-protocol reader field terms doc-seq)
-	svd (svd clustering-protocol k m)
-	U (:U svd)
-	S (:S svd)
-	V (:V svd)
-	VS (mmult (sel V :cols (range 0 k)) 
-		  (sel (sel S :cols (range 0 k)) :rows (range 0 k)))
-	pca (principal-components VS)
-	pcs (sel (:rotation pca) :cols (range 0 num-clusters))
-	sims (map (fn [docvec] 
-		    (sort-by #(second %) 
-			     (map (fn [pc] 
-				    [(first pc) (cosine-similarity docvec (second pc))]) 
-				  (indexed (trans pcs))))) 
-		  VS)
-	labels (clojure.contrib.seq-utils/indexed (map #(first (last %)) sims))
-	clusters (reduce #(merge %1 %2) 
-			 {} 
-			 (map (fn [x] {(keyword (str x)) 
-				       (map #(get-docid reader
-							id-field
-							(nth doc-seq %)) 
-					    (map first
-						 (filter #(= (second %) x) 
-							 labels)))})
-			      (range 0 num-clusters)))]
+	svd-factorization (svd clustering-protocol k m)
+	clusters (cluster-docs clustering-protocol reader doc-seq svd-factorization k num-clusters id-field)]
     {:clusters clusters
-     :svd svd}))
+     :svd svd-factorization}))
 
 
 (defn -cluster [this
@@ -103,12 +77,12 @@
   (let [algorithm (.get (.getParams solr-request) "mode")
 	engine (cond (= "distributed" algorithm) (DistributedLSAClusteringEngine)
 			   :else (LocalLSAClusteringEngine))
-	result (cluster engine
-			(:reader @(.state this)) 
-			(:narrative-field @(.state this)) 
-			(:id-field @(.state this))
-			(:terms @(.state this)) 
-			doc-list 
-			(Integer. (.get (.getParams solr-request) "k"))
-			(Integer. (.get (.getParams solr-request) "nclusters")))]
-  (:clusters result)))
+	result (cluster-dispatch engine
+				 (:reader @(.state this)) 
+				 (:narrative-field @(.state this)) 
+				 (:id-field @(.state this))
+				 (:terms @(.state this)) 
+				 doc-list 
+				 (Integer. (.get (.getParams solr-request) "k"))
+				 (Integer. (.get (.getParams solr-request) "nclusters")))]
+    (:clusters result)))

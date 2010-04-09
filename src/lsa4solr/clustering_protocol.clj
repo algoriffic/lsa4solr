@@ -10,7 +10,8 @@
   (get-mapper [self terms vec-ref ndocs])
   (init-frequency-vector [self n])
   (get-frequency-matrix [self reader field terms hits])
-  (svd [self k m]))
+  (svd [self k m])
+  (cluster-docs [self reader doc-seq svd-factorization k num-clusters id-field]))
 
 (defn get-mapper-common [terms vec-ref ndocs update-ref]
   (proxy [org.apache.lucene.index.TermVectorMapper]
@@ -21,7 +22,7 @@
 	    (update-ref vec-ref (- (:idx term-entry) 1)  (* frequency (:idf term-entry))))))
     (setExpectations [field numTerms storeOffsets storePositions]
 		     nil)))
-  
+
 
 (deftype LocalLSAClusteringEngine 
   []
@@ -46,10 +47,38 @@
 					field
 					terms
 					hits))))
-  (svd [self k m] (let [svd-result (DoubleSingularValueDecomposition. m)]
-	     {:U (Matrix. (.getU svd-result))
-	      :S (Matrix. (.getS svd-result))
-	      :V (Matrix. (.getV svd-result))}))
+  (svd [self k m] 
+       (let [svd-result (DoubleSingularValueDecomposition. m)]
+	 {:U (Matrix. (.getU svd-result))
+	  :S (Matrix. (.getS svd-result))
+	  :V (Matrix. (.getV svd-result))}))
+  
+  (cluster-docs [self reader doc-seq svd-factorization k num-clusters id-field]
+		(let [U (:U svd-factorization)
+		      S (:S svd-factorization)
+		      V (:V svd-factorization)
+		      VS (mmult (sel V :cols (range 0 k)) 
+				(sel (sel S :cols (range 0 k)) :rows (range 0 k)))
+		      pca (principal-components VS)
+		      pcs (sel (:rotation pca) :cols (range 0 num-clusters))
+		      sims (map (fn [docvec] 
+				  (sort-by #(second %) 
+					   (map (fn [pc] 
+						  [(first pc) (cosine-similarity docvec (second pc))]) 
+						(indexed (trans pcs))))) 
+				VS)
+		      labels (clojure.contrib.seq-utils/indexed (map #(first (last %)) sims))
+		      clusters (reduce #(merge %1 %2) 
+				       {} 
+				       (map (fn [x] {(keyword (str x)) 
+						     (map #(get-docid reader
+								      id-field
+								      (nth doc-seq %)) 
+							  (map first
+							       (filter #(= (second %) x) 
+								       labels)))})
+					    (range 0 num-clusters)))]
+		  clusters))
   )
 
 (deftype DistributedLSAClusteringEngine 
@@ -76,18 +105,18 @@
 						 field
 						 terms
 						 hits))]
-			(.transpose (new org.apache.mahout.math.SparseRowMatrix 
-					 (int-array [(count rows) (count terms)]) 
-					 rows))))
+			  (.transpose (new org.apache.mahout.math.SparseRowMatrix 
+					   (int-array [(count rows) (count terms)]) 
+					   rows))))
 
   (svd [self k m]
        (let [hadoop-conf (new org.apache.hadoop.conf.Configuration)
 	     writer (write-matrix hadoop-conf m)
 	     dm (doto (new org.apache.mahout.math.hadoop.DistributedRowMatrix 
-		      "/tmp/distMatrix" 
-		      "/tmp/hadoopOut"
-		      (.numRows m)
-		      (.numCols m))
+			   "/tmp/distMatrix" 
+			   "/tmp/hadoopOut"
+			   (.numRows m)
+			   (.numCols m))
 		  (.configure (new org.apache.hadoop.mapred.JobConf hadoop-conf)))
 	     eigenvalues (new java.util.ArrayList)
 	     eigenvectors (new org.apache.mahout.math.DenseMatrix (+ k 2) (.numCols m))
@@ -101,5 +130,32 @@
 	      (matrix (to-array (map (fn [vec] (map #(.get %1) 
 						    (iterator-seq (.iterateAll (.vector vec)))))
 				     (take k eigenvectors)))))}))
+
+  (cluster-docs [self reader doc-seq svd-factorization k num-clusters id-field]
+		(let [U (:U svd-factorization)
+		      S (:S svd-factorization)
+		      V (:V svd-factorization)
+		      VS (mmult (sel V :cols (range 0 k)) 
+				(sel (sel S :cols (range 0 k)) :rows (range 0 k)))
+		      pca (principal-components VS)
+		      pcs (sel (:rotation pca) :cols (range 0 num-clusters))
+		      sims (map (fn [docvec] 
+				  (sort-by #(second %) 
+					   (map (fn [pc] 
+						  [(first pc) (cosine-similarity docvec (second pc))]) 
+						(indexed (trans pcs))))) 
+				VS)
+		      labels (clojure.contrib.seq-utils/indexed (map #(first (last %)) sims))
+		      clusters (reduce #(merge %1 %2) 
+				       {} 
+				       (map (fn [x] {(keyword (str x)) 
+						     (map #(get-docid reader
+								      id-field
+								      (nth doc-seq %)) 
+							  (map first
+							       (filter #(= (second %) x) 
+								       labels)))})
+					    (range 0 num-clusters)))]
+		  clusters))
   )
 
