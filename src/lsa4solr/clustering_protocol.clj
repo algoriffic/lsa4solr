@@ -111,9 +111,9 @@
 
   (svd [self k m]
        (let [hadoop-conf (new org.apache.hadoop.conf.Configuration)
-	     writer (write-matrix hadoop-conf m)
+	     writer (write-matrix hadoop-conf m "/tmp/mtosvd")
 	     dm (doto (new org.apache.mahout.math.hadoop.DistributedRowMatrix 
-			   "/tmp/distMatrix" 
+			   "/tmp/mtosvd" 
 			   "/tmp/hadoopOut"
 			   (.numRows m)
 			   (.numCols m))
@@ -131,31 +131,51 @@
 						    (iterator-seq (.iterateAll (.vector vec)))))
 				     (take k eigenvectors)))))}))
 
-  (cluster-docs [self reader doc-seq svd-factorization k num-clusters id-field]
-		(let [U (:U svd-factorization)
-		      S (:S svd-factorization)
+  (cluster-docs [self 
+		 reader
+		 doc-seq
+		 svd-factorization 
+		 k
+		 num-clusters
+		 id-field]
+		(let [hadoop-conf (new org.apache.hadoop.conf.Configuration)
+		      fs (org.apache.hadoop.fs.FileSystem/get hadoop-conf)
+		      U (:U svd-factorization)
+		      S (:S svd-factorization) 
 		      V (:V svd-factorization)
-		      VS (mmult (sel V :cols (range 0 k)) 
-				(sel (sel S :cols (range 0 k)) :rows (range 0 k)))
-		      pca (principal-components VS)
-		      pcs (sel (:rotation pca) :cols (range 0 num-clusters))
-		      sims (map (fn [docvec] 
-				  (sort-by #(second %) 
-					   (map (fn [pc] 
-						  [(first pc) (cosine-similarity docvec (second pc))]) 
-						(indexed (trans pcs))))) 
-				VS)
-		      labels (clojure.contrib.seq-utils/indexed (map #(first (last %)) sims))
-		      clusters (reduce #(merge %1 %2) 
-				       {} 
-				       (map (fn [x] {(keyword (str x)) 
-						     (map #(get-docid reader
-								      id-field
-								      (nth doc-seq %)) 
-							  (map first
-							       (filter #(= (second %) x) 
-								       labels)))})
-					    (range 0 num-clusters)))]
+		      m (trans 
+			 (mmult (sel S :cols (range 0 k) :rows (range 0 k))
+				(trans (mmult (sel V :cols (range 0 k))))))
+		      srm (doto (org.apache.mahout.math.SparseRowMatrix. (int-array (dim m)))
+			    ((fn [sparse-row-matrix]
+			       (doall 
+				(for [i (range 0 (count m))
+				      j (range 0 (count (sel m :rows 0)))]
+				  (.setQuick sparse-row-matrix i j (sel m :rows i :cols j)))))))
+		      writer (lsa4solr.hadoop-utils/write-matrix hadoop-conf srm "/tmp/reducedm")
+		      initial-centroids (org.apache.mahout.clustering.kmeans.RandomSeedGenerator/buildRandom
+					 "/tmp/reducedm" "/tmp/centroids" num-clusters)
+		      job (org.apache.mahout.clustering.kmeans.KMeansDriver/runJob
+			   "/tmp/reducedm" 
+			   (.toString initial-centroids)
+			   "/tmp/kmeanscluster" 
+			   "org.apache.mahout.common.distance.CosineDistanceMeasure"
+			   0.00000001 
+			   k
+			   num-clusters)
+		      tkey (org.apache.hadoop.io.Text.)
+		      tval (org.apache.hadoop.io.Text.)
+		      groups (clojure.contrib.seq-utils/flatten
+			      (map (fn [path-string] (let [path (org.apache.hadoop.fs.Path. path-string)
+							   seq-reader (org.apache.hadoop.io.SequenceFile$Reader. fs path hadoop-conf) 
+							   valseq (take-while (fn [v] (.next seq-reader tkey tval)) (repeat [tkey tval]))]  
+						       (map #(.toString (second %)) valseq)))
+				   (map #(str "/tmp/kmeanscluster/points/part-0000" %) (range 0 8))))
+		      clusters (apply merge-with #(into %1 %2)
+				      (map #(hash-map (keyword (second %))
+						      (list (lsa4solr.lucene-utils/get-docid reader "id" (nth doc-seq (first %1)))))
+					   (indexed groups)))]
 		  clusters))
+		
   )
 
