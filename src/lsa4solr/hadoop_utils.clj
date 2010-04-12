@@ -7,9 +7,9 @@
 		   (range 0 (.numRows m))) 
 	      (iterator-seq (.iterator m)))))
 
-(defn write-matrix [hadoop-conf m]
+(defn write-matrix [hadoop-conf m path-string]
   (let [fs (org.apache.hadoop.fs.FileSystem/get hadoop-conf)
-	path (new org.apache.hadoop.fs.Path "/tmp/distMatrix/part-00000")]
+	path (new org.apache.hadoop.fs.Path path-string)]
     (doto (new org.apache.hadoop.io.SequenceFile$Writer 
 	       fs
 	       hadoop-conf

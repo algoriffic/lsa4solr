@@ -111,10 +111,16 @@
 
   (svd [self k m]
        (let [hadoop-conf (new org.apache.hadoop.conf.Configuration)
-	     writer (write-matrix hadoop-conf m "/tmp/mtosvd")
+	     fs (org.apache.hadoop.fs.FileSystem/get hadoop-conf)
+	     base-path (org.apache.hadoop.fs.Path. (str "/doc-clustering/" (java.lang.System/nanoTime)))
+	     mkdirs-result (org.apache.hadoop.fs.FileSystem/mkdirs fs 
+								   base-path
+								   (org.apache.hadoop.fs.permission.FsPermission/getDefault))
+	     m-path (str (.toString base-path) "/mtosvd")
+	     writer (write-matrix hadoop-conf m m-path)
 	     dm (doto (new org.apache.mahout.math.hadoop.DistributedRowMatrix 
-			   "/tmp/mtosvd" 
-			   "/tmp/hadoopOut"
+			   m-path
+			   (str (.toString base-path) "/svdout")
 			   (.numRows m)
 			   (.numCols m))
 		  (.configure (new org.apache.hadoop.mapred.JobConf hadoop-conf)))
@@ -140,6 +146,10 @@
 		 id-field]
 		(let [hadoop-conf (new org.apache.hadoop.conf.Configuration)
 		      fs (org.apache.hadoop.fs.FileSystem/get hadoop-conf)
+		      base-path (org.apache.hadoop.fs.Path. (str "/kmeans-clustering/" (java.lang.System/nanoTime)))
+		      mkdirs-result (org.apache.hadoop.fs.FileSystem/mkdirs fs 
+									    base-path
+									    (org.apache.hadoop.fs.permission.FsPermission/getDefault))
 		      U (:U svd-factorization)
 		      S (:S svd-factorization) 
 		      V (:V svd-factorization)
@@ -152,13 +162,16 @@
 				(for [i (range 0 (count m))
 				      j (range 0 (count (sel m :rows 0)))]
 				  (.setQuick sparse-row-matrix i j (sel m :rows i :cols j)))))))
-		      writer (lsa4solr.hadoop-utils/write-matrix hadoop-conf srm "/tmp/reducedm")
-		      initial-centroids (org.apache.mahout.clustering.kmeans.RandomSeedGenerator/buildRandom
-					 "/tmp/reducedm" "/tmp/centroids" num-clusters)
+		      reduced-m-path (str (.toString base-path) "/reducedm")
+		      writer (lsa4solr.hadoop-utils/write-matrix hadoop-conf srm reduced-m-path)
+		      initial-centroids (org.apache.mahout.clustering.kmeans.RandomSeedGenerator/buildRandom reduced-m-path
+													     (str (.toString base-path) "/centroids") 
+													     num-clusters)
+		      cluster-output-path (str (.toString base-path) "/clusterout")
 		      job (org.apache.mahout.clustering.kmeans.KMeansDriver/runJob
-			   "/tmp/reducedm" 
+			   reduced-m-path
 			   (.toString initial-centroids)
-			   "/tmp/kmeanscluster" 
+			   cluster-output-path
 			   "org.apache.mahout.common.distance.CosineDistanceMeasure"
 			   0.00000001 
 			   k
@@ -170,7 +183,7 @@
 							   seq-reader (org.apache.hadoop.io.SequenceFile$Reader. fs path hadoop-conf) 
 							   valseq (take-while (fn [v] (.next seq-reader tkey tval)) (repeat [tkey tval]))]  
 						       (map #(.toString (second %)) valseq)))
-				   (map #(str "/tmp/kmeanscluster/points/part-0000" %) (range 0 8))))
+				   (map #(str cluster-output-path "/points/part-0000" %) (range 0 8))))
 		      clusters (apply merge-with #(into %1 %2)
 				      (map #(hash-map (keyword (second %))
 						      (list (lsa4solr.lucene-utils/get-docid reader "id" (nth doc-seq (first %1)))))

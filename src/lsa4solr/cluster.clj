@@ -14,7 +14,7 @@
  :state state)
 
 (defn -initialize-state []
-    [[] (ref {})])
+  [[] (ref {})])
 
 (defn init-term-freq-doc [reader field]
   (let [terms (. reader terms)
@@ -76,7 +76,7 @@
 		solr-request]
   (let [algorithm (.get (.getParams solr-request) "mode")
 	engine (cond (= "distributed" algorithm) (DistributedLSAClusteringEngine)
-			   :else (LocalLSAClusteringEngine))
+		     :else (LocalLSAClusteringEngine))
 	result (cluster-dispatch engine
 				 (:reader @(.state this)) 
 				 (:narrative-field @(.state this)) 
