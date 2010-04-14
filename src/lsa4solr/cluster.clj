@@ -1,10 +1,6 @@
 (ns lsa4solr.cluster
   (:use [clojure.contrib.seq-utils :only [indexed]]
-	[lsa4solr core clustering-protocol]
-	[incanter.core]
-	[incanter.stats])
-  (:import (cern.colt.matrix.tdouble.algo.decomposition DoubleSingularValueDecomposition)
-	   (incanter Matrix)))
+	[lsa4solr core clustering-protocol]))
 
 (gen-class
  :name lsa4solr.cluster/LSAClusteringEngine
@@ -31,7 +27,7 @@
 		   {(keyword text) 
 		    {
 		     :df df
-		     :idf (log2 (/ numdocs df))
+		     :idf (java.lang.Math/log (/ numdocs df))
 		     :idx (counter)
 		     }
 		    })
@@ -63,20 +59,15 @@
 			k
 			num-clusters]
   (let [doc-seq (iterator-seq (.iterator doc-list))
-	m (get-frequency-matrix clustering-protocol reader field terms doc-seq)
-	svd-factorization (svd clustering-protocol k m)
-	clusters (cluster-docs clustering-protocol reader doc-seq svd-factorization k num-clusters id-field)]
-    {:clusters clusters
-     :svd svd-factorization}))
+	clusters (cluster-docs clustering-protocol reader terms doc-seq k num-clusters field id-field)]
+    {:clusters clusters}))
 
 
 (defn -cluster [this
 		query
 		doc-list
 		solr-request]
-  (let [algorithm (.get (.getParams solr-request) "mode")
-	engine (cond (= "distributed" algorithm) (DistributedLSAClusteringEngine)
-		     :else (LocalLSAClusteringEngine))
+  (let [engine (DistributedLSAClusteringEngine)
 	result (cluster-dispatch engine
 				 (:reader @(.state this)) 
 				 (:narrative-field @(.state this)) 

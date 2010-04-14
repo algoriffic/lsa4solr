@@ -11,10 +11,10 @@ the cosine similarity distance of each individual document to the first n princi
 components.
 
 This first version requires that the number of clusters and the reduced rank be
-supplied by the user.  There are two modes to the algorithm - local and distributed.
-In local mode, matrix algebra is performed in memory therefore only
-small document sets will work.  In distributed mode, decomposition is done using Apache
-Mahout.  This mode is more appropriate for large document sets.
+supplied by the user.  Decomposition is performed using the DistributedLanczosSolver 
+from Apache Mahout on a Hadoop cluster.  After decomposition of the term-document
+matrix, the reduced rank document vectors are clusters using k-means clustering also
+from Apache Mahout.
 
 Development goals include determining the optimal number of clusters, optimizing
 the reduced rank, etc.
@@ -43,7 +43,6 @@ classloader include:
     arpack-combo-0.1.jar
     clojure-1.2.0.jar
     clojure-contrib-1.2.0-master-20100122.191106-1.jar
-    incanter-full-1.0.0.jar
     apache-solr-clustering-3.1-dev.jar
     parallelcolt-0.7.2.jar
     lsa4solr.jar
@@ -107,6 +106,16 @@ to get decent results:
    </fieldType>
 
 
+Hadoop Setup
+-----------------
+
+In order to use lsa4solr with Hadoop, make sure that the mahout-math-0.4.jar is
+in the Hadoop lib directory.  This is a dependency of the mahout-core-0.4.jar which
+contains the distributed job.  Put the core-site.xml and mapred-site.xml files from
+the resources directory into Solr's webapp/WEB-INF/classes directory and configure
+them to point to your Hadoop setup.
+
+
 Using
 -----
 
@@ -123,18 +132,6 @@ where
     rows     - the standard Solr rows parameter
   
 The cluster information will be at the bottom of the response.
-
-Using with Hadoop
------------------
-
-In order to use lsa4solr with Hadoop, make sure that the mahout-math-0.4.jar is
-in the Hadoop lib directory.  This is a dependency of the mahout-core-0.4.jar which
-contains the distributed job.  Put the core-site.xml and mapred-site.xml files from
-the resources directory into Solr's webapp/WEB-INF/classes directory and configure
-them to point to your Hadoop setup.  Finally, access lsa4solr-distributed by appending
-"mode=distributed" to the URL:
-
-     http://localhost:8983/solr/lsa4solr?nclusters=2&q=Summary:.*&rows=100&k=10&mode=distributed
 
 Testing
 -------

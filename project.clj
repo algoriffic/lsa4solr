@@ -1,11 +1,9 @@
 (defproject lsa4solr "1.0.0-SNAPSHOT"
   :description "Clustering component for Solr based on Latent Semantic Analysis"
   :namespaces :all
-  :repositories {"incanter" "http://repo.incanter.org"
-		 "apache" "https://repository.apache.org/"}
+  :repositories {"apache" "https://repository.apache.org/"}
   :dependencies [[org.clojure/clojure "1.2.0-master-SNAPSHOT"]
                  [org.clojure/clojure-contrib "1.2.0-master-SNAPSHOT"]
-		 [incanter/incanter "1.2.1-SNAPSHOT"]
 		 [org.apache.mahout/mahout-core "0.4-SNAPSHOT"
 		  :exclusions [org.apache.lucene/lucene-core
 			       org.apache.lucene/lucene-analyzers]]

@@ -1,20 +1,23 @@
-(ns lsa4solr.hadoop-utils)
+(ns lsa4solr.hadoop-utils
+  (:import (org.apache.mahout.math VectorWritable)
+	   (org.apache.hadoop.io IntWritable)
+	   (org.apache.hadoop.fs FileSystem Path)
+	   (org.apache.hadoop.io SequenceFile$Writer)))
 
 (defn write-vectors [writer
 		     m]
-  (doall (map #(.append writer %1 (new org.apache.mahout.math.VectorWritable (.vector %2))) 
-	      (map #(new org.apache.hadoop.io.IntWritable %) 
+  (doall (map #(.append writer %1 (VectorWritable. (.vector %2))) 
+	      (map #(IntWritable. %) 
 		   (range 0 (.numRows m))) 
 	      (iterator-seq (.iterator m)))))
 
 (defn write-matrix [hadoop-conf m path-string]
-  (let [fs (org.apache.hadoop.fs.FileSystem/get hadoop-conf)
-	path (new org.apache.hadoop.fs.Path path-string)]
-    (doto (new org.apache.hadoop.io.SequenceFile$Writer 
-	       fs
-	       hadoop-conf
-	       path
-	       org.apache.hadoop.io.IntWritable
-	       org.apache.mahout.math.VectorWritable)
+  (let [fs (FileSystem/get hadoop-conf)
+	path (Path. path-string)]
+    (doto (SequenceFile$Writer. fs
+				hadoop-conf
+				path
+				IntWritable
+				VectorWritable)
       (write-vectors m)
       (.close))))
