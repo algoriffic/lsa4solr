@@ -2,7 +2,7 @@
   (:import (org.apache.mahout.math SparseMatrix RandomAccessSparseVector VectorWritable Matrix DenseMatrix)
 	   (org.apache.mahout.math.hadoop DistributedRowMatrix)
 	   (org.apache.mahout.math.hadoop.decomposer DistributedLanczosSolver)
-	   (org.apache.mahout.math.function UnaryFunction)
+	   (org.apache.mahout.math.function UnaryFunction TimesFunction)
 	   (org.apache.hadoop.fs Path FileSystem)
 	   (org.apache.hadoop.fs.permission FsPermission)
 	   (org.apache.hadoop.conf Configuration)
@@ -13,17 +13,32 @@
   [data]
   (cond
    (coll? data) (doto (RandomAccessSparseVector. (count data))
-		  ((fn [vec] (map #(.setQuick vec %1 %2) 
-				  (range 0 (count data)) 
-				  data))))
+		  ((fn [vec] (doall
+			      (map #(.setQuick vec %1 %2) 
+				   (range 0 (count data)) 
+				   data)))))
    (integer? data) (doto (RandomAccessSparseVector. data))))
-   
-   
+
+(defn print-vector
+  [v]
+  (map #(.get %) (iterator-seq (.iterateAll v))))
+
+(defn add
+  [v1 v2]
+  (.plus v1 v2))
+
+(defn divide
+  [v1 s]
+  (.divide v1 s))
+
+(defn centroid
+  [& vecs]
+  (divide (reduce add vecs) (count vecs)))
 
 (defn set-value
   ([#^RandomAccessSparseVector vector index value] (.setQuick vector index value)))
 
-(defn matrix
+(defn distributed-matrix
   [vec-iterator]
   (let [hadoop-conf (Configuration.)
 	fs (FileSystem/get hadoop-conf)
@@ -54,6 +69,13 @@
 			       nrows
 			       ncols)
 			       (.configure (JobConf. hadoop-conf)))))
+
+(defn local-matrix
+  [data]
+  (doto (DenseMatrix. (count data) (count (first data)))
+    ((fn [m] (doall 
+	      (map (fn [row] (.assignRow m row (create-vector (nth data row))))
+		   (range 0 (count data))))))))
 
 (defmulti mmult (fn [A & B] (type A)))
 

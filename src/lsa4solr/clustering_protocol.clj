@@ -13,6 +13,39 @@
   (get-frequency-matrix [self reader field terms hits])
   (cluster-docs [self reader terms doc-seq k num-clusters narrative-field id-field]))
 
+(defn kmeans-cluster
+    [num-clusters max-iterations V S]
+    (let [hadoop-conf (Configuration.)
+	  fs (FileSystem/get hadoop-conf)
+	  base-path (Path. (str "/lsa4solr/kmeans-clustering/" (java.lang.System/nanoTime)))
+	  mkdirs-result (FileSystem/mkdirs fs 
+					   base-path
+					   (FsPermission/getDefault))
+	  reduced-fm (mmult V S)
+	  reduced-m-path (str (.toString base-path) "/reducedm")
+	  writer (write-matrix hadoop-conf reduced-fm reduced-m-path)
+	  initial-centroids (RandomSeedGenerator/buildRandom reduced-m-path
+							     (str (.toString base-path) "/centroids") 
+							     num-clusters)
+	  cluster-output-path (str (.toString base-path) "/clusterout")
+	  job (KMeansDriver/runJob
+	       reduced-m-path
+	       (.toString initial-centroids)
+	       cluster-output-path
+	       "org.apache.mahout.common.distance.CosineDistanceMeasure"
+	       0.00000001 
+	       max-iterations
+	       num-clusters)
+	  tkey (Text.)
+	  tval (Text.)
+	  groups (clojure.contrib.seq-utils/flatten
+		  (map (fn [path-string] (let [path (Path. path-string)
+					       seq-reader (SequenceFile$Reader. fs path hadoop-conf) 
+					       valseq (take-while (fn [v] (.next seq-reader tkey tval)) (repeat [tkey tval]))]  
+					   (map #(.toString (second %)) valseq)))
+		       (map #(str cluster-output-path "/points/part-0000" %) (range 0 8))))]
+      groups))
+
 (defn get-mapper-common [terms vec-ref ndocs update-ref]
   (proxy [org.apache.lucene.index.TermVectorMapper]
       []
@@ -37,17 +70,17 @@
   
   (get-frequency-matrix 
    [self reader field terms hits]
-   (matrix (extract-frequency-vectors 
-	    reader
-	    (fn [n] (init-frequency-vector self n))
-	    (fn [terms vec-ref ndocs] 
-	      (get-mapper self
-			  terms
-			  vec-ref
-			  ndocs))
-	    field
-	    terms
-	    hits)))
+   (distributed-matrix (extract-frequency-vectors 
+			reader
+			(fn [n] (init-frequency-vector self n))
+			(fn [terms vec-ref ndocs] 
+			  (get-mapper self
+				      terms
+				      vec-ref
+				      ndocs))
+			field
+			terms
+			hits)))
   
   (cluster-docs [self 
 		 reader
@@ -63,40 +96,10 @@
 							  terms
 							  doc-seq))
 		      svd-factorization (decompose-svd fm k)
-		      hadoop-conf (Configuration.)
-		      fs (FileSystem/get hadoop-conf)
-		      base-path (Path. (str "/lsa4solr/kmeans-clustering/" (java.lang.System/nanoTime)))
-		      mkdirs-result (FileSystem/mkdirs fs 
-						       base-path
-						       (FsPermission/getDefault))
 		      U (:U svd-factorization)
 		      S (:S svd-factorization) 
 		      V (:V svd-factorization)
-;;		      reduced-fm (mmult U (mmult S (transpose V)))
-		      reduced-fm (mmult V S)
-		      reduced-m-path (str (.toString base-path) "/reducedm")
-;;		      writer (write-matrix hadoop-conf (transpose reduced-fm) reduced-m-path)
-		      writer (write-matrix hadoop-conf reduced-fm reduced-m-path)
-		      initial-centroids (RandomSeedGenerator/buildRandom reduced-m-path
-									 (str (.toString base-path) "/centroids") 
-									 num-clusters)
-		      cluster-output-path (str (.toString base-path) "/clusterout")
-		      job (KMeansDriver/runJob
-			   reduced-m-path
-			   (.toString initial-centroids)
-			   cluster-output-path
-			   "org.apache.mahout.common.distance.CosineDistanceMeasure"
-			   0.00000001 
-			   k
-			   num-clusters)
-		      tkey (Text.)
-		      tval (Text.)
-		      groups (clojure.contrib.seq-utils/flatten
-			      (map (fn [path-string] (let [path (Path. path-string)
-							   seq-reader (SequenceFile$Reader. fs path hadoop-conf) 
-							   valseq (take-while (fn [v] (.next seq-reader tkey tval)) (repeat [tkey tval]))]  
-						       (map #(.toString (second %)) valseq)))
-				   (map #(str cluster-output-path "/points/part-0000" %) (range 0 8))))
+		      groups (kmeans-cluster num-clusters k V S)
 		      clusters (apply merge-with #(into %1 %2)
 				      (map #(hash-map (keyword (second %))
 						      (list (get-docid reader "id" (nth doc-seq (first %1)))))
@@ -105,7 +108,10 @@
 		   :clusters clusters
 		   :U U
 		   :S S
-		   :V V
-		   :reduced-fm reduced-fm}))
+		   :V V}))
+
+  
   )
+
+
 
