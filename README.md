@@ -163,4 +163,4 @@ You can also use the cluster algorithm directly from the REPL
     #'lsa4solr.cluster/docids
     lsa4solr.cluster> (def docslice (new org.apache.solr.search.DocSlice 0 (count docids) (int-array docids) (float-array (repeat (count docids) 1)) (count docids) 1))
     #'lsa4solr.cluster/docslice
-    lsa4solr.cluster> (def clst (cluster (LocalLSAClusteringEngine) reader "Summary" "id" initial-terms docslice 50 2))
+    lsa4solr.cluster> (def clst (cluster (DistributedLSAClusteringEngine) reader "Summary" "id" initial-terms docslice 50 2))
