@@ -10,11 +10,12 @@ get rid of noise.  These reconstructed document vectors are clustered by compari
 the cosine similarity distance of each individual document to the first n principal
 components.
 
-This first version requires that the number of clusters and the reduced rank be
-supplied by the user.  Decomposition is performed using the DistributedLanczosSolver 
-from Apache Mahout on a Hadoop cluster.  After decomposition of the term-document
-matrix, the reduced rank document vectors are clusters using k-means clustering also
-from Apache Mahout.
+Decomposition is performed using the DistributedLanczosSolver from Apache Mahout on 
+a Hadoop cluster.  After decomposition of the term-document matrix, the reduced rank 
+document vectors are clusters using k-means clustering also from Apache Mahout or 
+a local hierarchical clustering method.  The number of clusters must be supplied if
+using the kmeans algorithm.  A dendrogram is produced as output from the hierarchical
+clustering.  The dendrogram is suitable as input to the [JavaScript InfoVis Toolkit](http://thejit.org/).
 
 Development goals include determining the optimal number of clusters, optimizing
 the reduced rank, etc.
@@ -51,6 +52,8 @@ classloader include:
     mahout-collections-0.4-SNAPSHOT.jar
     mahout-core-0.4-SNAPSHOT.jar
     mahout-math-0.4-SNAPSHOT.jar
+    commons-cli-2.0-mahout.jar
+    uncommons-maths-1.2.jar
   
 Configuring Solr
 ----------------
@@ -122,14 +125,15 @@ Using
 Start Solr with the -Dsolr.clustering.enabled=true option.  Once the server
 has started, cluster your documents using an URL like
 
-    http://localhost:8983/solr/lsa4solr?nclusters=2&q=Summary:.*&rows=100&k=10
+    http://localhost:8983/solr/lsa4solr?nclusters=2&q=Summary:.*&rows=100&k=10&algorithm=kmeans
 
 where
 
-    k        - the rank of the reduced SVD matrix
-    ncluster - the number of clusters to group the documents into
-    q        - the standard Solr query parameter
-    rows     - the standard Solr rows parameter
+    algorithm - the algorithm to use for clustering (hierarchical or kmeans)
+    k         - the rank of the reduced SVD matrix
+    nclusters - the number of clusters to group the documents into (kmeans only)
+    q         - the standard Solr query parameter
+    rows      - the standard Solr rows parameter
   
 The cluster information will be at the bottom of the response.
 
@@ -163,4 +167,5 @@ You can also use the cluster algorithm directly from the REPL
     #'lsa4solr.cluster/docids
     lsa4solr.cluster> (def docslice (new org.apache.solr.search.DocSlice 0 (count docids) (int-array docids) (float-array (repeat (count docids) 1)) (count docids) 1))
     #'lsa4solr.cluster/docslice
-    lsa4solr.cluster> (def clst (cluster (DistributedLSAClusteringEngine) reader "Summary" "id" initial-terms docslice 50 2))
+    lsa4solr.cluster> (def kmeans-clst (cluster-kmeans-docs reader initial-terms 50 2 "Summary" "id"))
+    lsa4solr.cluster> (def hierarchical-clst (cluster-hierarchical-docs reader initial-terms 50 "Summary" "id"))
