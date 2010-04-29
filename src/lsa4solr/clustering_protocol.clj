@@ -1,17 +1,14 @@
 (ns lsa4solr.clustering-protocol
-  (:use [clojure.contrib.seq-utils :only [indexed]]
-	[lsa4solr core hadoop-utils lucene-utils mahout-matrix])
+  (:use	[lsa4solr core hadoop-utils lucene-utils mahout-matrix hierarchical-clustering dendrogram])
+  (:require [clojure [zip :as z]])
+  (:require [clojure.contrib 
+	     [seq-utils :as seq-utils]
+	     [zip-filter :as zf]])
   (:import (org.apache.hadoop.conf Configuration)
 	   (org.apache.hadoop.fs FileSystem Path)
 	   (org.apache.hadoop.io Text SequenceFile$Reader)
 	   (org.apache.hadoop.fs.permission FsPermission)
 	   (org.apache.mahout.clustering.kmeans RandomSeedGenerator KMeansDriver)))
-
-(defprotocol LSAClusteringEngineProtocol
-  (get-mapper [self terms vec-ref ndocs])
-  (init-frequency-vector [self n])
-  (get-frequency-matrix [self reader field terms hits])
-  (cluster-docs [self reader terms doc-seq k num-clusters narrative-field id-field]))
 
 (defn kmeans-cluster
     [num-clusters max-iterations V S]
@@ -39,12 +36,35 @@
 	  tkey (Text.)
 	  tval (Text.)
 	  groups (clojure.contrib.seq-utils/flatten
-		  (map (fn [path-string] (let [path (Path. path-string)
+		  (map (fn [file-status] (let [path (.getPath file-status)
 					       seq-reader (SequenceFile$Reader. fs path hadoop-conf) 
-					       valseq (take-while (fn [v] (.next seq-reader tkey tval)) (repeat [tkey tval]))]  
+					       valseq (take-while (fn [v] (.next seq-reader tkey tval))
+								  (repeat [tkey tval]))]  
 					   (map #(.toString (second %)) valseq)))
-		       (map #(str cluster-output-path "/points/part-0000" %) (range 0 8))))]
+		       (.globStatus fs (Path. (str cluster-output-path "/points/part*")))))]
       groups))
+
+(defn emit-leaf-node-fn
+  [reader doc-seq id-field]
+  (fn [node]
+    (hash-map "name" (get-docid reader id-field (nth doc-seq (:id node)))
+	      "id" (get-docid reader id-field (nth doc-seq (:id node)))
+	      "data" {}
+	      "children" [])))
+
+(defn emit-branch-node-fn
+  []
+  (let [id (ref 0)]
+    (fn [node children-arr]
+      (hash-map "name" (:count (meta node))
+		"id" (dosync (alter id inc))
+		"data" (hash-map "count" (:count (meta node)))
+		"children" children-arr))))
+
+(defn hierarchical-clustering
+  [reader id-field doc-seq mat]
+  (let [[dend merge-sequence] (last (hclust mat))]
+     (dendrogram-to-map dend (emit-branch-node-fn) (emit-leaf-node-fn reader doc-seq id-field))))
 
 (defn get-mapper-common [terms vec-ref ndocs update-ref]
   (proxy [org.apache.lucene.index.TermVectorMapper]
@@ -57,61 +77,71 @@
 		     nil)))
 
 
-(deftype DistributedLSAClusteringEngine 
-  [] 
-  LSAClusteringEngineProtocol
-  (get-mapper [self terms vec-ref ndocs]
-	      (get-mapper-common terms vec-ref ndocs
-				 (fn [vec-ref idx weight]
-				   (set-value @vec-ref idx weight))))
+(defn get-mapper
+  [terms vec-ref ndocs]
+  (get-mapper-common terms vec-ref ndocs
+		     (fn [vec-ref idx weight]
+		       (set-value @vec-ref idx weight))))
 
-  (init-frequency-vector [self n]
-			 (ref (create-vector n)))
+(defn init-frequency-vector
+  [n]
+  (ref (create-vector n)))
   
-  (get-frequency-matrix 
-   [self reader field terms hits]
-   (distributed-matrix (extract-frequency-vectors 
-			reader
-			(fn [n] (init-frequency-vector self n))
-			(fn [terms vec-ref ndocs] 
-			  (get-mapper self
-				      terms
-				      vec-ref
-				      ndocs))
-			field
-			terms
-			hits)))
-  
-  (cluster-docs [self 
-		 reader
-		 terms
-		 doc-seq
-		 k
-		 num-clusters
-		 narrative-field
-		 id-field]
-		(let [fm (transpose (get-frequency-matrix self
-							  reader
-							  narrative-field
-							  terms
-							  doc-seq))
-		      svd-factorization (decompose-svd fm k)
-		      U (:U svd-factorization)
-		      S (:S svd-factorization) 
-		      V (:V svd-factorization)
-		      groups (kmeans-cluster num-clusters k V S)
-		      clusters (apply merge-with #(into %1 %2)
-				      (map #(hash-map (keyword (second %))
-						      (list (get-docid reader "id" (nth doc-seq (first %1)))))
-					   (indexed groups)))]
-		  {:groups groups
-		   :clusters clusters
-		   :U U
-		   :S S
-		   :V V}))
+(defn get-frequency-matrix 
+  [reader field terms hits]
+  (distributed-matrix (extract-frequency-vectors 
+		       reader
+		       (fn [n] (init-frequency-vector n))
+		       (fn [terms vec-ref ndocs] 
+			 (get-mapper terms
+				     vec-ref
+				     ndocs))
+		       field
+		       terms
+		       hits)))
 
-  
-  )
+(defn decompose-term-doc-matrix
+  [reader narrative-field terms doc-seq k]
+  (let [fm (transpose (get-frequency-matrix reader
+					    narrative-field
+					    terms
+					    doc-seq))
+	svd-factorization (decompose-svd fm k)
+	U (:U svd-factorization)
+	S (:S svd-factorization) 
+	V (:V svd-factorization)]
+    (list U S V)))
 
+(defn cluster-kmeans-docs 
+  [reader
+   terms
+   doc-seq
+   k
+   num-clusters
+   narrative-field
+   id-field]
+  (let [[U S V] (decompose-term-doc-matrix reader narrative-field terms doc-seq k)
+	groups (kmeans-cluster num-clusters k V S)
+	clusters (apply merge-with #(into %1 %2)
+			(map #(hash-map (keyword (second %))
+					(list (get-docid reader id-field (nth doc-seq (first %1)))))
+			     (seq-utils/indexed groups)))]
+    {:clusters clusters
+     :U U
+     :S S
+     :V V}))
 
-
+(defn cluster-hierarchical-docs 
+  [reader
+   terms
+   doc-seq
+   k
+   narrative-field
+   id-field]
+  (let [[U S V] (decompose-term-doc-matrix reader narrative-field terms doc-seq k)
+	SVt (transpose (mmult S (transpose V)))
+	clusters (hierarchical-clustering reader id-field doc-seq SVt)]
+    {:clusters clusters
+     :U U
+     :S S
+     :V V}))

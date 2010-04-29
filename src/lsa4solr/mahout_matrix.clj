@@ -1,8 +1,10 @@
 (ns lsa4solr.mahout-matrix
+  (:require [clojure.contrib.generic [math-functions :as math]])
   (:import (org.apache.mahout.math SparseMatrix RandomAccessSparseVector VectorWritable Matrix DenseMatrix)
 	   (org.apache.mahout.math.hadoop DistributedRowMatrix)
 	   (org.apache.mahout.math.hadoop.decomposer DistributedLanczosSolver)
 	   (org.apache.mahout.math.function UnaryFunction TimesFunction)
+	   (org.apache.mahout.common.distance EuclideanDistanceMeasure)
 	   (org.apache.hadoop.fs Path FileSystem)
 	   (org.apache.hadoop.fs.permission FsPermission)
 	   (org.apache.hadoop.conf Configuration)
@@ -23,17 +25,42 @@
   [v]
   (map #(.get %) (iterator-seq (.iterateAll v))))
 
-(defn add
+(defn minus 
   [v1 v2]
-  (.plus v1 v2))
+  (.minus v1 v2))
+
+(defn mult
+  [v1 s]
+  (.times v1 s))
 
 (defn divide
   [v1 s]
   (.divide v1 s))
 
+(defn add
+  [v1 v2]
+  (.plus v1 v2))
+
 (defn centroid
   [& vecs]
   (divide (reduce add vecs) (count vecs)))
+
+(def euclidean-distance-measure (EuclideanDistanceMeasure.))
+
+(defn euclidean-distance
+  [v1 v2]
+  (.distance euclidean-distance-measure v1 v2))
+
+(defn mean
+  [& vecs]
+  (divide (reduce add vecs) 
+	  (count vecs)))
+
+(defn variance
+  [& vecs]
+  (let [sample-mean (apply mean vecs)]
+    (/ (reduce + (map #(math/pow (euclidean-distance % sample-mean) 2) vecs))
+       (count vecs))))
 
 (defn set-value
   ([#^RandomAccessSparseVector vector index value] (.setQuick vector index value)))

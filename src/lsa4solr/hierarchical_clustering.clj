@@ -1,62 +1,73 @@
 (ns lsa4solr.hierarchical-clustering
-  (:use [lsa4solr mahout-matrix])
-  (:require [clojure.contrib [combinatorics :as combine] [seq-utils :as seq-utils]])
-  (:import (org.apache.mahout.math SparseMatrix RandomAccessSparseVector VectorWritable Matrix DenseMatrix)
+  (:use [lsa4solr mahout-matrix dendrogram])
+  (:require [clojure [zip :as z]])
+  (:require [clojure.contrib 
+	     [combinatorics :as combine]
+	     [zip-filter :as zf]
+	     [seq-utils :as seq-utils]])
+  (:import (org.apache.mahout.math SparseMatrix 
+				   RandomAccessSparseVector
+				   VectorWritable
+				   Matrix
+				   DenseMatrix)
 	   (org.apache.mahout.math.hadoop DistributedRowMatrix)))
+
+(defn get-count
+  [cluster]
+  (:count (meta cluster)))
+
+(defn get-centroid
+  [cluster]
+  (:centroid (meta cluster)))
+
+(defn merge-centroids
+  [c1 c2]
+  (add (mult (get-centroid c1) (double (/ 1 (get-count c1))))
+       (mult (get-centroid c2) (double (/ 1 (get-count c2))))))
 
 (defn get-vecs
   [mat idxs]
   (map #(.getRow mat %) idxs))
 
-(defn drop-nth [coll & idxs]
-  (cond
-   (> (count idxs) 1) (concat (take (dec (first idxs)) coll)
-			      (apply drop-nth (drop (first idxs) coll)
-				     (map #(- % (first idxs)) (rest idxs))))
-   :default (concat (take (dec (first idxs)) coll)
-		    (drop (first idxs) coll))))
+(defn average-dispersion
+  [mat group centroid dist]
+  (/ (reduce + (map #(dist centroid %) (get-vecs mat group)))
+     (count group)))
 
-(defn new-grouping
-  [groups to-combine]
-  (conj (apply drop-nth groups (map inc to-combine))
-	(seq-utils/flatten (apply conj (map #(nth groups %) to-combine)))))
+(defn average-intercluster-dispersion
+  [mat clusters dist]
+  (let [centroids (map #(apply centroid (get-vecs mat %)) clusters)
+	combos (combine/combinations centroids 2)]
+    (/ (reduce + (map #(apply dist %) combos))
+       (count combos))))
 
 (defn hclust
+  "Hierarchical clustering of the rows of mat.  Returns a dendrogram
+   and a merge sequence.  The dendrogram is a tree with doc ids as 
+   leaf nodes and meta data in the branch nodes indicating the number
+   of children and the centroid of the branch."
   [mat]
-  (let [groups (map list (range 0 (.numRows mat)))
-	cosine-dist (org.apache.mahout.common.distance.CosineDistanceMeasure.)
-	centroids (ref {})
-	distance-map (ref {})
-	dist-fn (fn [g1 g2] 
-		  (let [get-or-update (fn [g h]
-					(cond
-					 (not (contains? @centroids h1))
-					 (dosync 
-					  (let [c (apply centroid (apply get-vecs mat g)]
-					    (alter centroids assoc h c)
-					    c)))))
-			h1 (hash g1)
-			h2 (hash g2)
-			c1 (get-or-update g1 h1)
-			c2 (get-or-update g2 h2)]
-		    (.distance cosine-dist v1 v2)))
-	get-distance (fn [g1 g2]
-		       (let [h (hash (list g1 g2))]
-			 (cond 
-			  (contains? @distance-map h) (val (find @distance-map h))
-			  :default (let [d (dist-fn g1 g2)]
-				     (dosync
-				      (alter distance-map assoc h d)
-				      d)))))]
-    (take (.numRows mat) 
-	  (iterate (fn [groups] 
-		     (let [dists (doall (pmap #(list % (apply get-distance (map second %)))
-					      (combine/combinations (seq-utils/indexed groups) 2)))
-			   closest-pair (map first
-					     (first (reduce (fn [l r]
-							      (cond
-							       (< (second l) (second r)) l
-							       :default r))
-							    dists)))]
-		     (new-grouping groups (seq-utils/flatten closest-pair)))) 
-		   groups))))
+  (let [dend (dendrogram (map #(with-meta {:id %} 
+				      (hash-map 
+				       :centroid (.getRow mat %) 
+				       :count 1))
+				   (range 0 (.numRows mat))))
+	get-distance (memoize euclidean-distance)]
+    (take 
+     (- (.numRows mat) 1)
+     (iterate (fn [[dend merge-sequence]]
+		(let [clusters (z/children dend)
+		      dists (map #(list % (get-distance (get-centroid (nth clusters (first %)))
+							(get-centroid (nth clusters (second %)))))
+				 (combine/combinations (range 0 (count clusters)) 2))
+		      closest-pair (first (reduce #(if (< (second %1) (second %2)) %1 %2)
+						  (first dists)
+						  (rest dists)))]
+		  (list (merge-nodes dend 
+				     closest-pair
+				     (fn [n1 n2] 
+				       (with-meta (list (with-meta n1 (meta n1)) (with-meta n2 (meta n2)))
+					 (hash-map :count (apply + (map get-count [n1 n2]))
+						   :centroid (merge-centroids n1 n2)))))
+			(conj merge-sequence closest-pair))))
+	      (list dend '())))))

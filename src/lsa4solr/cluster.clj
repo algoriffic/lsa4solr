@@ -50,30 +50,37 @@
 	    :terms (init-term-freq-doc reader narrative-field))
      name)))
 
-(defn cluster-dispatch [clustering-protocol
-			reader
-			field
-			id-field
-			terms
-			doc-list
-			k
-			num-clusters]
-  (let [doc-seq (iterator-seq (.iterator doc-list))
-	clusters (cluster-docs clustering-protocol reader terms doc-seq k num-clusters field id-field)]
-    {:clusters clusters}))
+(defn cluster-dispatch 
+  ;; K-Means
+  ([reader field id-field terms doc-list k num-clusters]
+     (let [doc-seq (iterator-seq (.iterator doc-list))
+	   clusters (cluster-kmeans-docs reader terms doc-seq k num-clusters field id-field)]
+       (:clusters clusters)))
+
+  ;; Hierarchical
+  ([reader field id-field terms doc-list k]
+     (let [doc-seq (iterator-seq (.iterator doc-list))
+	   clusters (cluster-hierarchical-docs reader terms doc-seq k field id-field)]
+       (:clusters clusters))))
 
 
 (defn -cluster [this
 		query
 		doc-list
 		solr-request]
-  (let [engine (DistributedLSAClusteringEngine)
-	result (cluster-dispatch engine
-				 (:reader @(.state this)) 
-				 (:narrative-field @(.state this)) 
-				 (:id-field @(.state this))
-				 (:terms @(.state this)) 
-				 doc-list 
-				 (Integer. (.get (.getParams solr-request) "k"))
-				 (Integer. (.get (.getParams solr-request) "nclusters")))]
-    (:clusters result)))
+   (let [algorithm (.get (.getParams solr-request) "algorithm")]
+     (cond
+      (= algorithm "hierarchical") (cluster-dispatch (:reader @(.state this)) 
+						     (:narrative-field @(.state this)) 
+						     (:id-field @(.state this))
+						     (:terms @(.state this)) 
+						     doc-list 
+						     (Integer. (.get (.getParams solr-request) "k")))
+      (= algorithm "kmeans") (cluster-dispatch (:reader @(.state this)) 
+					       (:narrative-field @(.state this)) 
+					       (:id-field @(.state this))
+					       (:terms @(.state this)) 
+					       doc-list 
+					       (Integer. (.get (.getParams solr-request) "k"))
+					       (Integer. (.get (.getParams solr-request) "nclusters"))))))
+
